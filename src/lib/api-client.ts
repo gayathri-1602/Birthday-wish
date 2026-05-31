@@ -1,4 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, push, onValue, get } from "firebase/database";
 
 // Types for the API
 export interface Wish {
@@ -13,45 +15,21 @@ export interface CreateWishData {
   message: string;
 }
 
-// Local storage key
-const WISHES_STORAGE_KEY = "birthday-wishes";
+// Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyCGSxUx8IDpd3Gk9gMtYl-Q6NO5tab5qGk",
+  authDomain: "birthday-wish-d9a40.firebaseapp.com",
+  databaseURL: "https://birthday-wish-d9a40-default-rtdb.firebaseio.com",
+  projectId: "birthday-wish-d9a40",
+  storageBucket: "birthday-wish-d9a40.firebasestorage.app",
+  messagingSenderId: "139504918023",
+  appId: "1:139504918023:web:1955530492549fab8d14a2"
+};
 
-// Helper functions for localStorage
-function getWishesFromStorage(): Wish[] {
-  try {
-    const stored = localStorage.getItem(WISHES_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveWishToStorage(wish: Wish): void {
-  const wishes = getWishesFromStorage();
-  wishes.push(wish);
-  localStorage.setItem(WISHES_STORAGE_KEY, JSON.stringify(wishes));
-}
-
-// API base URL - can be configured via environment variable
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
-
-// Helper function for API calls
-async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.statusText}`);
-  }
-
-  return response.json();
-}
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+const wishesRef = ref(database, 'wishes');
 
 // Query key factory
 export const getGetWishesQueryKey = () => ["wishes"] as const;
@@ -62,12 +40,15 @@ export function useGetWishes() {
     queryKey: getGetWishesQueryKey(),
     queryFn: async () => {
       try {
-        // Try to fetch from API first
-        return await apiRequest<Wish[]>("/wishes");
+        const snapshot = await get(wishesRef);
+        if (snapshot.exists()) {
+          const wishesData = snapshot.val();
+          return Object.values(wishesData) as Wish[];
+        }
+        return [];
       } catch (error) {
-        // Fallback to localStorage if API fails
-        console.log("API not available, using localStorage fallback");
-        return getWishesFromStorage();
+        console.error("Error fetching wishes from Firebase:", error);
+        return [];
       }
     },
   });
@@ -80,22 +61,18 @@ export function useCreateWish() {
   return useMutation({
     mutationFn: async (data: { data: CreateWishData }) => {
       try {
-        // Try to post to API first
-        return await apiRequest<Wish>("/wishes", {
-          method: "POST",
-          body: JSON.stringify(data.data),
-        });
-      } catch (error) {
-        // Fallback to localStorage if API fails
-        console.log("API not available, using localStorage fallback");
         const newWish: Wish = {
           id: Date.now().toString(),
           name: data.data.name,
           message: data.data.message,
           createdAt: new Date().toISOString(),
         };
-        saveWishToStorage(newWish);
+        
+        await push(wishesRef, newWish);
         return newWish;
+      } catch (error) {
+        console.error("Error creating wish in Firebase:", error);
+        throw new Error("Failed to send wish. Please try again.");
       }
     },
     onSuccess: () => {
